@@ -4,13 +4,13 @@
 
 ### Fixed
 
-- The first SSE reconnect after a healthy stream drops is now jittered to `[d/2, d]`, like every other backoff level. The drops this absorbs are fleet-wide — a single edge event severs every stream at once — so every client re-entered the backoff together and waited an identical delay, republishing the drop's own synchronisation as a reconnect spike one backoff later. Measured in production: a drop spread across 2.5–3.0 ms produced a reconnect spread of 26–46 ms. The delay never exceeds the previous one and stays strictly positive, so a stream that fails immediately still cannot busy-loop. ([#2508](https://github.com/canopy-labs/featureflip/issues/2508))
+- The first SSE reconnect after a healthy stream drops is now jittered to `[d/2, d]`, like every other backoff level. The drops this absorbs are fleet-wide — a single edge event severs every stream at once — so every client re-entered the backoff together and waited an identical delay, republishing the drop's own synchronisation as a reconnect spike one backoff later. Measured in production: a drop spread across 2.5–3.0 ms produced a reconnect spread of 26–46 ms. The delay never exceeds the previous one and stays strictly positive, so a stream that fails immediately still cannot busy-loop. (#2508)
 
 ## 2.7.1 — 2026-08-24
 
 ### Changed
 
-- Republished in lockstep with `@featureflip/js` 2.7.1. This package had no source changes of its own; it receives that release's date-operand fixes through its `@featureflip/js` dependency. Recorded here because the npm release tag publishes all four JavaScript packages at a single version, so this version exists on npm with no entry in this file. ([#2468](https://github.com/canopy-labs/featureflip/issues/2468))
+- Republished in lockstep with `@featureflip/js` 2.7.1. This package had no source changes of its own; it receives that release's date-operand fixes through its `@featureflip/js` dependency. Recorded here because the npm release tag publishes all four JavaScript packages at a single version, so this version exists on npm with no entry in this file. (#2468)
 
 ## 2.6.1 — 2026-08-23
 
@@ -22,9 +22,9 @@
 
 ### Fixed
 
-- A closed handle serves the caller's default from every accessor and reports not-initialized. `close()` releases the shared core — stopping streaming and polling, shutting down the event processor — but the in-memory snapshot stayed readable, so a closed client kept evaluating against a frozen snapshot that could never update again while still reporting itself initialized. ([#2327](https://github.com/canopy-labs/featureflip/issues/2327))
+- A closed handle serves the caller's default from every accessor and reports not-initialized. `close()` releases the shared core — stopping streaming and polling, shutting down the event processor — but the in-memory snapshot stayed readable, so a closed client kept evaluating against a frozen snapshot that could never update again while still reporting itself initialized. (#2327)
 
-- A failed initial flag fetch is now diagnosable rather than swallowed by a bare `catch`. ([#2322](https://github.com/canopy-labs/featureflip/issues/2322))
+- A failed initial flag fetch is now diagnosable rather than swallowed by a bare `catch`. (#2322)
 
 ## 2.5.4 — 2026-08-18
 
