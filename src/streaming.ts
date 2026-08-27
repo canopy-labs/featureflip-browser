@@ -1,13 +1,37 @@
+import type { FlagValue } from './types';
+
 export interface StreamingOptions {
   baseUrl: string;
   clientKey: string;
   context: Record<string, unknown>;
-  onChange: (flags: Record<string, { value: unknown; variation: string; reason: string }>) => void;
+  /**
+   * @param isSnapshot true when this payload is the connect-time full snapshot
+   *   (the server marks it `full: true`), false for a subsequent delta. The core
+   *   REPLACES its store on a snapshot and MERGES a delta.
+   */
+  onChange: (flags: Record<string, FlagValue>, isSnapshot: boolean) => void;
   onError?: (error: Error) => void;
 }
 
 const MAX_BACKOFF_MS = 30_000;
 const INITIAL_BACKOFF_MS = 1_000;
+
+/**
+ * Returns a value in [d/2, d] to de-correlate reconnects across many SDK
+ * instances (thundering-herd avoidance after a shared outage).
+ *
+ * Applied to EVERY reconnect, including the first. The drops this absorbs are
+ * fleet-wide — one edge event severs every stream at once (#2457) — so every
+ * client re-enters the backoff together. Scheduling the raw `backoffMs` there
+ * republished the drop's own synchronisation as a reconnect spike one backoff
+ * later (#2508). The band stays strictly positive, so a stream that fails
+ * immediately still cannot busy-loop.
+ */
+export function withJitter(delayMs: number): number {
+  if (delayMs <= 0) return delayMs;
+  const half = delayMs / 2;
+  return half + Math.random() * half;
+}
 
 export class StreamingConnection {
   private eventSource: EventSource | null = null;
@@ -47,7 +71,12 @@ export class StreamingConnection {
       try {
         const data = JSON.parse(event.data);
         this.backoffMs = INITIAL_BACKOFF_MS;
-        this.options.onChange(data.flags ?? data);
+        // The connect-time snapshot carries `full: true` so the core can tell it
+        // from a delta and REPLACE its store (dropping flags deleted while the
+        // stream was down). Keyed off the explicit marker — NOT "first event" —
+        // which would collide with a FLAG_REMOVED-first delta.
+        const isSnapshot = data.full === true;
+        this.options.onChange(data.flags ?? data, isSnapshot);
       } catch {
         // Ignore parse errors
       }
@@ -78,10 +107,12 @@ export class StreamingConnection {
   private scheduleReconnect(): void {
     if (this.closed || this.reconnectTimer !== null) return;
 
+    // The ladder state stays un-jittered so the doubling is exact; only the
+    // scheduled wait is scattered.
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
-    }, this.backoffMs);
+    }, withJitter(this.backoffMs));
 
     this.backoffMs = Math.min(this.backoffMs * 2, MAX_BACKOFF_MS);
   }

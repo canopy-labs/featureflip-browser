@@ -1,19 +1,19 @@
-# @featureflip/browser-sdk
+# @featureflip/browser
 
-Framework-agnostic browser SDK for evaluating Featureflip feature flags.
+Framework-agnostic browser SDK for evaluating [Featureflip](https://featureflip.io) feature flags.
 
 ## Installation
 
 ```bash
-npm install @featureflip/browser-sdk
+npm install @featureflip/browser
 ```
 
 ## Quick Start
 
 ```ts
-import { FeatureflipClient } from '@featureflip/browser-sdk';
+import { FeatureflipClient } from '@featureflip/browser';
 
-const client = new FeatureflipClient({
+const client = FeatureflipClient.get({
   clientKey: 'your-client-sdk-key',
 });
 
@@ -22,13 +22,17 @@ await client.initialize();
 const showBanner = client.boolVariation('show-banner', false);
 ```
 
+> **Singleton by construction.** `FeatureflipClient.get()` is the only way to obtain a client — the public constructor was removed in v2.0. Calling `get()` more than once with the same `clientKey` returns handles pointing at one shared underlying client (refcounted). This makes framework bindings, React StrictMode double-mounts, and per-component construction all harmless — they all resolve to one SSE connection and one flag store per key.
+
 ## API Reference
 
-### Constructor
+### `FeatureflipClient.get(config)`
 
 ```ts
-new FeatureflipClient(config: FeatureflipClientConfig)
+FeatureflipClient.get(config: FeatureflipClientConfig): FeatureflipClient
 ```
+
+Returns a client for the given client key. The first call constructs and registers a shared core; subsequent calls with the same key return a new handle pointing at the cached core. When the last handle for a key is closed, the core shuts down and is removed from the cache.
 
 ### Configuration Options
 
@@ -90,7 +94,7 @@ Unsubscribe from events.
 
 #### `close(): void`
 
-Closes the SSE streaming connection and cleans up resources.
+Decrements the refcount on the shared core. When the last handle for a given client key is closed, the shared core closes the SSE connection and removes itself from the factory cache. Double-close on the same handle is a no-op.
 
 ### Testing
 
@@ -105,3 +109,7 @@ const client = FeatureflipClient.forTesting({
 client.boolVariation('show-banner', false); // true
 client.stringVariation('button-color', 'red'); // 'blue'
 ```
+
+## License
+
+Apache-2.0

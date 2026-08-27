@@ -34,14 +34,15 @@ describe('FeatureflipClient', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     globalThis.EventSource = originalEventSource;
+    FeatureflipClient.resetForTesting();
   });
 
   it('throws if no clientKey provided', () => {
-    expect(() => new FeatureflipClient({ clientKey: '' })).toThrow('clientKey is required');
+    expect(() => FeatureflipClient.get({ clientKey: '' })).toThrow('clientKey is required');
   });
 
   it('returns default value before initialization', () => {
-    const client = new FeatureflipClient({ clientKey: 'test-key', streaming: false });
+    const client = FeatureflipClient.get({ clientKey: 'test-key', streaming: false });
     expect(client.boolVariation('flag', false)).toBe(false);
     expect(client.boolVariation('flag', true)).toBe(true);
     expect(client.stringVariation('flag', 'default')).toBe('default');
@@ -61,7 +62,7 @@ describe('FeatureflipClient', () => {
     const { MockES } = mockEventSource();
     globalThis.EventSource = MockES as unknown as typeof EventSource;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
     });
@@ -72,6 +73,29 @@ describe('FeatureflipClient', () => {
     expect(client.stringVariation('string-flag', 'default')).toBe('hello');
     expect(client.numberVariation('number-flag', 0)).toBe(99);
     expect(client.jsonVariation('json-flag', {})).toEqual({ nested: true });
+
+    client.close();
+  });
+
+  it('does not reject and serves defaults when the initial evaluate fails', async () => {
+    // Initial evaluate (fetch) fails: eval-api unreachable at cold start.
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error('eval-api down'));
+    const { MockES } = mockEventSource();
+    globalThis.EventSource = MockES as unknown as typeof EventSource;
+
+    const client = FeatureflipClient.get({
+      clientKey: 'test-key',
+      baseUrl: 'http://localhost:8080',
+      streaming: true,
+    });
+
+    // Must NOT reject (degraded-but-recovering).
+    await expect(client.initialize()).resolves.toBeUndefined();
+    expect(client.isInitialized).toBe(true);
+    // Empty store -> serves caller default.
+    expect(client.boolVariation('flag-a', false)).toBe(false);
+    // The stream was created despite the failed init, so it can self-heal.
+    expect(MockES.mock.calls.length).toBe(1);
 
     client.close();
   });
@@ -94,7 +118,7 @@ describe('FeatureflipClient', () => {
     const { MockES } = mockEventSource();
     globalThis.EventSource = MockES as unknown as typeof EventSource;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
     });
@@ -130,7 +154,7 @@ describe('FeatureflipClient', () => {
       });
     });
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: false,
@@ -163,7 +187,7 @@ describe('FeatureflipClient', () => {
 
     globalThis.fetch = mockFetch(flags);
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: false,
@@ -184,7 +208,7 @@ describe('FeatureflipClient', () => {
 
     globalThis.fetch = mockFetch(flags);
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: false,
@@ -204,7 +228,7 @@ describe('FeatureflipClient', () => {
 
     globalThis.fetch = mockFetch(flags);
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: false,
@@ -241,7 +265,7 @@ describe('FeatureflipClient', () => {
     const { MockES, listeners } = mockEventSource();
     globalThis.EventSource = MockES as unknown as typeof EventSource;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: true,
@@ -305,7 +329,9 @@ describe('FeatureflipClient', () => {
     // Track that the old stream is closed before the HTTP identify call
     let streamClosedBeforeFetch = false;
     const fetchMock = globalThis.fetch as ReturnType<typeof vi.fn>;
-    const originalImpl = fetchMock.getMockImplementation()!;
+    const originalImpl = fetchMock.getMockImplementation() as (
+      ...args: unknown[]
+    ) => unknown;
     fetchMock.mockImplementation((...args: unknown[]) => {
       if (mockCloses[0]?.mock.calls.length > 0) {
         streamClosedBeforeFetch = true;
@@ -313,7 +339,7 @@ describe('FeatureflipClient', () => {
       return originalImpl(...args);
     });
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: true,
@@ -351,7 +377,7 @@ describe('FeatureflipClient', () => {
     });
     globalThis.EventSource = MockES as unknown as typeof EventSource;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: true,
@@ -375,7 +401,7 @@ describe('FeatureflipClient', () => {
   it('initialize() is a no-op after already initialized', async () => {
     globalThis.fetch = mockFetch({});
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: false,
@@ -407,7 +433,7 @@ describe('FeatureflipClient', () => {
     });
     globalThis.EventSource = MockES as unknown as typeof EventSource;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: true,
@@ -433,7 +459,7 @@ describe('FeatureflipClient', () => {
   it('off removes event handler', async () => {
     globalThis.fetch = mockFetch({});
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: false,
@@ -452,7 +478,7 @@ describe('FeatureflipClient', () => {
     const fetchMock = mockFetch({});
     globalThis.fetch = fetchMock;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'my-sdk-key',
       baseUrl: 'http://localhost:8080',
       context: { user_id: 'abc' },
@@ -494,7 +520,7 @@ describe('FeatureflipClient', () => {
     });
     globalThis.EventSource = MockES as unknown as typeof EventSource;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: true,
@@ -523,6 +549,114 @@ describe('FeatureflipClient', () => {
     client.close();
   });
 
+  it('replaces the store on a reconnect snapshot, dropping flags deleted while disconnected', async () => {
+    // Regression for #1873: the connect/reconnect snapshot is marked `full: true`.
+    // A flag deleted while the browser was disconnected is simply absent from the
+    // snapshot, so the store must REPLACE (not merge) — otherwise the deleted flag
+    // lingers and keeps serving its stale value instead of the caller default.
+    const initialFlags = {
+      'flag-a': { value: true, variation: 'on', reason: 'match' },
+      'flag-b': { value: 'keep', variation: 'v1', reason: 'match' },
+    };
+
+    globalThis.fetch = mockFetch(initialFlags);
+
+    const listeners: Record<string, (event: MessageEvent) => void> = {};
+    const MockES = vi.fn().mockImplementation(function () {
+      return {
+        addEventListener: vi.fn((type: string, handler: (event: MessageEvent) => void) => {
+          listeners[type] = handler;
+        }),
+        close: vi.fn(),
+        onerror: null,
+      };
+    });
+    globalThis.EventSource = MockES as unknown as typeof EventSource;
+
+    const client = FeatureflipClient.get({
+      clientKey: 'test-key',
+      baseUrl: 'http://localhost:8080',
+      streaming: true,
+    });
+
+    const changeHandler = vi.fn();
+    client.on('change', changeHandler);
+
+    await client.initialize();
+
+    expect(client.boolVariation('flag-a', false)).toBe(true);
+    expect(client.stringVariation('flag-b', 'default')).toBe('keep');
+
+    // Reconnect snapshot omits flag-a (deleted during the disconnect) and keeps flag-b.
+    listeners['flags-updated']?.(
+      new MessageEvent('flags-updated', {
+        data: JSON.stringify({
+          full: true,
+          flags: {
+            'flag-b': { value: 'keep', variation: 'v1', reason: 'match' },
+          },
+        }),
+      }),
+    );
+
+    // flag-a must be gone -> serves caller default; flag-b unchanged.
+    expect(client.boolVariation('flag-a', true)).toBe(true);
+    expect(client.boolVariation('flag-a', false)).toBe(false);
+    expect(client.stringVariation('flag-b', 'default')).toBe('keep');
+    // The drop surfaces as a change with newValue undefined.
+    expect(changeHandler).toHaveBeenCalledWith({
+      'flag-a': { oldValue: true, newValue: undefined },
+    });
+
+    client.close();
+  });
+
+  it('merges a delta (no full marker) without dropping flags absent from it', async () => {
+    // The delta path must stay a merge: a flag not mentioned in a delta stays put.
+    const initialFlags = {
+      'flag-a': { value: true, variation: 'on', reason: 'match' },
+      'flag-b': { value: false, variation: 'off', reason: 'default' },
+    };
+
+    globalThis.fetch = mockFetch(initialFlags);
+
+    const listeners: Record<string, (event: MessageEvent) => void> = {};
+    const MockES = vi.fn().mockImplementation(function () {
+      return {
+        addEventListener: vi.fn((type: string, handler: (event: MessageEvent) => void) => {
+          listeners[type] = handler;
+        }),
+        close: vi.fn(),
+        onerror: null,
+      };
+    });
+    globalThis.EventSource = MockES as unknown as typeof EventSource;
+
+    const client = FeatureflipClient.get({
+      clientKey: 'test-key',
+      baseUrl: 'http://localhost:8080',
+      streaming: true,
+    });
+
+    await client.initialize();
+
+    // Delta touches only flag-b; flag-a is absent but must NOT be dropped.
+    listeners['flags-updated']?.(
+      new MessageEvent('flags-updated', {
+        data: JSON.stringify({
+          flags: {
+            'flag-b': { value: true, variation: 'on', reason: 'match' },
+          },
+        }),
+      }),
+    );
+
+    expect(client.boolVariation('flag-a', false)).toBe(true);
+    expect(client.boolVariation('flag-b', false)).toBe(true);
+
+    client.close();
+  });
+
   it('does not remove flag when value is null but reason is not FLAG_REMOVED', async () => {
     const initialFlags = {
       'json-flag': { value: { some: 'data' }, variation: 'v1', reason: 'match' },
@@ -542,7 +676,7 @@ describe('FeatureflipClient', () => {
     });
     globalThis.EventSource = MockES as unknown as typeof EventSource;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: true,
@@ -586,7 +720,7 @@ describe('FeatureflipClient', () => {
     });
     globalThis.EventSource = MockES as unknown as typeof EventSource;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: true,
@@ -632,7 +766,7 @@ describe('FeatureflipClient', () => {
     });
     globalThis.EventSource = MockES as unknown as typeof EventSource;
 
-    const client = new FeatureflipClient({
+    const client = FeatureflipClient.get({
       clientKey: 'test-key',
       baseUrl: 'http://localhost:8080',
       streaming: true,

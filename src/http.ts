@@ -1,5 +1,7 @@
+import type { FlagValue } from './types';
+
 export interface EvaluateResponse {
-  flags: Record<string, { value: unknown; variation: string; reason: string }>;
+  flags: Record<string, FlagValue>;
 }
 
 export async function evaluate(

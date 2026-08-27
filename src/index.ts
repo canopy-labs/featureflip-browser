@@ -5,4 +5,6 @@ export type {
   FlagChanges,
   EventType,
   EventHandler,
+  EvaluationEvent,
+  EvaluationInspector,
 } from './types';
