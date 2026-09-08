@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.9.0 — 2026-09-01
+
+### Changed
+
+- Republished in lockstep with `@featureflip/js` 2.9.0. This package had no source changes of its own, and unlike the server-side SDKs it is **not** affected by that release's operator-spelling fix: client SDKs do not run a local evaluator, so the evaluation engine resolves the operator and this SDK forwards its answer verbatim. Recorded here because the npm release tag publishes all four JavaScript packages at a single version, so this version exists on npm with no change of its own to describe. (#2374)
+
 ## 2.8.0 — 2026-08-26
 
 ### Fixed
