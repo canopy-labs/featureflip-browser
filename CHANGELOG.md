@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.10.0 — 2026-09-18
+
+### Changed
+
+- Republished in lockstep with `@featureflip/js` 2.10.0. This package had no source changes of its own, and it is **not** affected by that release's SSE fallback fix: this SDK has no polling fallback at all and its stream already reconnected forever with a jittered backoff, which is the behaviour the server-side SDKs were brought into line with. Recorded here because the npm release tag publishes all four JavaScript packages at a single version, so this version exists on npm with no change of its own to describe. (#3071)
+
 ## 2.9.0 — 2026-09-01
 
 ### Changed
