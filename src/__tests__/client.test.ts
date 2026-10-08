@@ -494,6 +494,7 @@ describe('FeatureflipClient', () => {
         headers: {
           'Content-Type': 'application/json',
           Authorization: 'my-sdk-key',
+          'X-Featureflip-Reports-Evaluations': '1',
         },
         body: JSON.stringify({ context: { user_id: 'abc' } }),
       }),

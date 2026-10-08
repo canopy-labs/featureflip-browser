@@ -5,6 +5,15 @@ export interface FeatureflipClientConfig {
   streaming?: boolean;
   initTimeout?: number;
   /**
+   * Report which flags your application reads, so Featureflip can tell a flag
+   * your code still uses from one it only sends (default `true`). This is what
+   * lets an unused client-side flag be archived; evaluation analytics count
+   * reads rather than page loads. Set `false` to send no evaluation events —
+   * the server then records every flag it serves to this client, as older SDK
+   * versions did.
+   */
+  sendEvaluationEvents?: boolean;
+  /**
    * In-process observers fired on every variation call. Honored on the first
    * `get()` per client key (singleton-by-construction); deliberately excluded
    * from the resolved config and the config-equality check, since functions are

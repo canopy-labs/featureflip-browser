@@ -10,6 +10,8 @@ import type {
 import { EventEmitter } from '../events';
 import { evaluate, identify as httpIdentify } from '../http';
 import { StreamingConnection } from '../streaming';
+import { ReadRecorder } from './read-recorder';
+import { EventProcessor } from './event-processor';
 import { createLocalStorageStore, withAnonymousUserId, type AnonymousKeyStore } from './anonymous-key';
 
 /** The engine embeds the matched rule id in the reason as `rule-match:{id}`. */
@@ -34,7 +36,12 @@ export function resolveConfig(config: FeatureflipClientConfig): ResolvedConfig {
     context: config.context ?? {},
     streaming: config.streaming ?? true,
     initTimeout: config.initTimeout ?? 10_000,
+    sendEvaluationEvents: config.sendEvaluationEvents ?? true,
   };
+}
+
+function isNonBlankString(v: unknown): v is string {
+  return typeof v === 'string' && v.trim().length > 0;
 }
 
 /**
@@ -63,6 +70,12 @@ export class SharedFeatureflipCore {
   private readonly anonymousKeyStore: AnonymousKeyStore;
   private readonly inspectors: EvaluationInspector[];
 
+  /** Null when sendEvaluationEvents is off, and for createForTesting cores. */
+  private reads: ReadRecorder | null = null;
+  private events: EventProcessor | null = null;
+  /** user_id the reads are attributed to; undefined = not yet resolved. Cleared whenever the context changes. */
+  private readUserId: { value: string | undefined } | undefined;
+
   constructor(config: FeatureflipClientConfig, store: AnonymousKeyStore = createLocalStorageStore()) {
     if (!config.clientKey) {
       throw new Error('clientKey is required');
@@ -75,6 +88,18 @@ export class SharedFeatureflipCore {
     this.inspectors = (config.inspectors ?? []).filter(
       (i): i is EvaluationInspector => typeof i === 'function',
     );
+
+    if (this.config.sendEvaluationEvents) {
+      const events = new EventProcessor({
+        baseUrl: this.config.baseUrl,
+        clientKey: this.config.clientKey,
+        // A page coming back into view may have slept through the archive guard's 24 h;
+        // start a new read window so its next reads are reported straight away.
+        onVisible: () => this.reads?.resetWindow(),
+      });
+      this.events = events;
+      this.reads = new ReadRecorder((e) => events.enqueue(e));
+    }
   }
 
   /**
@@ -98,6 +123,11 @@ export class SharedFeatureflipCore {
     inspectors: EvaluationInspector[] = [],
   ): SharedFeatureflipCore {
     const core = new SharedFeatureflipCore({ clientKey: 'test-key', inspectors });
+    // A test double reports nothing and never touches the network.
+    core.reads = null;
+    core.events = null;
+    // The header is sent iff reporting is wired, so a stub must not claim it.
+    core.config.sendEvaluationEvents = false;
     for (const [key, value] of Object.entries(flags)) {
       core.flags.set(key, { value, variation: 'test', reason: 'test' });
     }
@@ -153,6 +183,7 @@ export class SharedFeatureflipCore {
   }
 
   private async doInitialize(): Promise<void> {
+    if (!this.closed) this.events?.start();
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.initTimeout);
 
@@ -162,6 +193,7 @@ export class SharedFeatureflipCore {
         this.config.clientKey,
         this.contextForRequests(this.config.context),
         controller.signal,
+        this.config.sendEvaluationEvents,
       );
       // If close() was called mid-flight, bail out before creating an SSE
       // connection on a discarded client.
@@ -210,6 +242,7 @@ export class SharedFeatureflipCore {
     const value =
       flag !== undefined && typeof flag.value === 'boolean' ? flag.value : defaultValue;
     this.notifyInspectors(key, flag, value);
+    this.recordRead(key, flag);
     return value;
   }
 
@@ -218,6 +251,7 @@ export class SharedFeatureflipCore {
     const value =
       flag !== undefined && typeof flag.value === 'string' ? flag.value : defaultValue;
     this.notifyInspectors(key, flag, value);
+    this.recordRead(key, flag);
     return value;
   }
 
@@ -226,6 +260,7 @@ export class SharedFeatureflipCore {
     const value =
       flag !== undefined && typeof flag.value === 'number' ? flag.value : defaultValue;
     this.notifyInspectors(key, flag, value);
+    this.recordRead(key, flag);
     return value;
   }
 
@@ -233,6 +268,7 @@ export class SharedFeatureflipCore {
     const flag = this.flags.get(key);
     const value = flag === undefined ? defaultValue : (flag.value as T);
     this.notifyInspectors(key, flag, value);
+    this.recordRead(key, flag);
     return value;
   }
 
@@ -279,13 +315,43 @@ export class SharedFeatureflipCore {
     }
   }
 
+  /**
+   * Record that application code read `flagKey`. The server credits this
+   * client only with the flags it reports here (it sends the
+   * X-Featureflip-Reports-Evaluations header), so a flag whose code was
+   * removed stops looking evaluated and can be archived.
+   */
+  private recordRead(flagKey: string, flag: FlagValue | undefined): void {
+    if (this.reads === null || this.closed) return;
+    this.reads.record(flagKey, flag?.variation, this.userIdForReads());
+  }
+
+  private userIdForReads(): string | undefined {
+    if (this.readUserId === undefined) {
+      // contextForRequests may hit localStorage; cache it — getSnapshot calls variations on every render.
+      // Mirror anonymous-key.ts: a non-blank camelCase `userId` counts when `user_id` is absent.
+      const ctx = this.contextForRequests(this.config.context);
+      let raw = ctx.user_id;
+      if (!isNonBlankString(raw) && isNonBlankString(ctx['userId'])) raw = ctx['userId'];
+      this.readUserId = { value: raw === undefined || raw === null ? undefined : String(raw) };
+    }
+    return this.readUserId.value;
+  }
+
   flagDetail(key: string): FlagValue | undefined {
-    return this.flags.get(key);
+    const flag = this.flags.get(key);
+    this.recordRead(key, flag);
+    return flag;
   }
 
   async identify(context: Record<string, unknown>): Promise<void> {
     const previousContext = this.config.context;
     this.config.context = context;
+    this.readUserId = undefined;
+
+    // The header below promises this client reports its reads, so the processor
+    // must be running even when identify() precedes initialize(). Idempotent.
+    if (!this.closed) this.events?.start();
 
     // Close the old stream before the HTTP call so stale SSE updates for the
     // previous context don't mutate flags while in-flight.
@@ -300,10 +366,13 @@ export class SharedFeatureflipCore {
         this.config.baseUrl,
         this.config.clientKey,
         this.contextForRequests(context),
+        undefined,
+        this.config.sendEvaluationEvents,
       );
     } catch (err) {
       // Revert context so it stays consistent with the current flags
       this.config.context = previousContext;
+      this.readUserId = undefined;
       this.emitter.emit('error', err instanceof Error ? err : new Error(String(err)));
 
       // Re-establish SSE with the original context
@@ -353,6 +422,9 @@ export class SharedFeatureflipCore {
 
     this.stream?.close();
     this.stream = null;
+    this.events?.stop();
+    this.events = null;
+    this.reads = null;
   }
 
   private createStream(): StreamingConnection {
@@ -450,7 +522,8 @@ export function resolvedConfigsEqual(a: ResolvedConfig, b: ResolvedConfig): bool
   return (
     a.baseUrl === b.baseUrl &&
     a.streaming === b.streaming &&
-    a.initTimeout === b.initTimeout
+    a.initTimeout === b.initTimeout &&
+    a.sendEvaluationEvents === b.sendEvaluationEvents
   );
 }
 

@@ -43,6 +43,7 @@ Returns a client for the given client key. The first call constructs and registe
 | `context` | `Record<string, unknown>` | `{}` | Initial evaluation context (user attributes) |
 | `streaming` | `boolean` | `true` | Enable SSE streaming for real-time updates |
 | `initTimeout` | `number` | `10000` | Timeout in ms for the initial evaluate request |
+| `sendEvaluationEvents` | `boolean` | `true` | Report which flags your app reads. Featureflip uses this to tell a flag your code still reads from one it only sends, which is what lets an unused client-side flag be archived. Only reads through `flagDetail()` or the typed `*Variation` methods count. Set `false` to report nothing — Featureflip then treats every flag it sends to this client as in use. |
 
 ### Methods
 

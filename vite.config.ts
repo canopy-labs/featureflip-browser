@@ -7,6 +7,7 @@ export default defineConfig({
     dts({
       rollupTypes: true,
       outDir: 'dist',
+      exclude: ['src/**/__tests__/**', 'src/**/__bench__/**'],
     }),
   ],
   build: {

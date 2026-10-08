@@ -1,7 +1,17 @@
 {
   "name": "@featureflip/browser",
-  "version": "2.10.0",
+  "version": "2.11.0",
   "description": "Browser SDK for Featureflip - framework-agnostic feature flag client",
+  "keywords": [
+    "feature-flags",
+    "feature-toggles",
+    "feature-management",
+    "featureflip",
+    "browser",
+    "javascript",
+    "typescript",
+    "sdk"
+  ],
   "type": "module",
   "main": "dist/index.cjs",
   "module": "dist/index.js",
@@ -30,17 +40,17 @@
     "type": "git",
     "url": "https://github.com/canopy-labs/featureflip-browser.git"
   },
-  "homepage": "https://featureflip.io/docs",
+  "homepage": "https://featureflip.io/docs/sdks/browser/",
   "publishConfig": {
     "access": "public"
   },
   "devDependencies": {
     "@typescript/typescript6": "^6.0.2",
-    "jsdom": "^30.0.1",
+    "jsdom": "^30.1.1",
     "typescript": "^7.0.2",
-    "vite": "^8.3.0",
-    "vite-plugin-dts": "^5.1.0",
-    "vitest": "^5.0.0"
+    "vite": "^8.3.2",
+    "vite-plugin-dts": "^5.1.2",
+    "vitest": "^5.0.3"
   },
   "overrides": {
     "lodash": ">=4.17.25"
