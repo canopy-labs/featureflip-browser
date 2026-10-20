@@ -3,7 +3,9 @@ import type {
   EventType,
   EventHandler,
   EvaluationInspector,
+  FlagSource,
   FlagValue,
+  InitializeOptions,
 } from './types';
 import { SharedFeatureflipCore, contextsEqual, resolveConfig, resolvedConfigsEqual } from './core/shared-core';
 
@@ -97,9 +99,23 @@ export class FeatureflipClient {
     }
   }
 
-  /** Initialize the client — loads flags and (if streaming) opens the SSE connection. */
-  initialize(): Promise<void> {
-    return this.core.initialize();
+  /**
+   * Initialize the client — loads flags and (if streaming) opens the SSE
+   * connection. With `bootstrap` values the client is already initialized, so
+   * this resolves at once while the fetch runs in the background; pass
+   * `{ waitForServer: true }` to wait for the first server response instead.
+   */
+  initialize(options?: InitializeOptions): Promise<void> {
+    return this.core.initialize(options);
+  }
+
+  /**
+   * Where the values being served came from right now: `'bootstrap'` or
+   * `'localStorage'` until the server answers, `'server'` after, `'none'`
+   * while serving defaults.
+   */
+  get flagSource(): FlagSource {
+    return this.core.flagSource;
   }
 
   /**
@@ -188,6 +204,20 @@ export class FeatureflipClient {
   ): FeatureflipClient {
     const core = SharedFeatureflipCore.createForTesting(flags, inspectors);
     return new FeatureflipClient(core);
+  }
+
+  /**
+   * Create a client for rendering on the server (SSR). It serves the
+   * `bootstrap` object's values, makes no network requests, touches no
+   * storage, and is NOT shared through the factory cache, so concurrent
+   * requests for different users can never see each other's values. Use
+   * {@link FeatureflipClient.get} in the browser.
+   */
+  static forServerRender(config: FeatureflipClientConfig): FeatureflipClient {
+    if (!config.clientKey) {
+      throw new Error('clientKey is required');
+    }
+    return new FeatureflipClient(SharedFeatureflipCore.createForServerRender(config));
   }
 
   /**

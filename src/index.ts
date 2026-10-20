@@ -7,4 +7,7 @@ export type {
   EventHandler,
   EvaluationEvent,
   EvaluationInspector,
+  FlagSource,
+  ReadyEvent,
+  InitializeOptions,
 } from './types';

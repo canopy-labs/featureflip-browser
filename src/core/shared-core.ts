@@ -5,7 +5,9 @@ import type {
   EvaluationEvent,
   EvaluationInspector,
   FlagChanges,
+  FlagSource,
   FlagValue,
+  InitializeOptions,
 } from '../types';
 import { EventEmitter } from '../events';
 import { evaluate, identify as httpIdentify } from '../http';
@@ -13,16 +15,25 @@ import { StreamingConnection } from '../streaming';
 import { ReadRecorder } from './read-recorder';
 import { EventProcessor } from './event-processor';
 import { createLocalStorageStore, withAnonymousUserId, type AnonymousKeyStore } from './anonymous-key';
+import { createLocalStorageFlagCache, type FlagCache } from './flag-cache';
 
 /** The engine embeds the matched rule id in the reason as `rule-match:{id}`. */
 const RULE_MATCH_PREFIX = 'rule-match:';
 
+/** The reason a value from a `bootstrap` object carries until the server's replaces it. */
+const BOOTSTRAP_REASON = 'bootstrap';
+
+/** Server SDK keys are minted with this prefix (SdkKeyGeneratorService). */
+const SERVER_KEY_PREFIX = 'sdk_server';
+
 /**
  * The fully-defaulted config. `inspectors` is deliberately omitted: functions
  * are not structurally comparable, so including it would make a differing
- * callback trip the "different options" warning on repeat `get()`.
+ * callback trip the "different options" warning on repeat `get()`. So is
+ * `bootstrap`: it is per page render, so a repeat `get()` passing different
+ * values is expected, not a misconfiguration.
  */
-export type ResolvedConfig = Required<Omit<FeatureflipClientConfig, 'inspectors'>>;
+export type ResolvedConfig = Required<Omit<FeatureflipClientConfig, 'inspectors' | 'bootstrap'>>;
 
 /**
  * Resolve a user-supplied config to the fully-defaulted shape. Exported so
@@ -44,6 +55,9 @@ function isNonBlankString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0;
 }
 
+/** Internal: the initial response arrived after identify() moved to another context. */
+class SupersededError extends Error {}
+
 /**
  * Internal shared core owning all expensive resources of a FeatureflipClient:
  * HTTP evaluation, SSE streaming connection, flag store, and event emitter.
@@ -62,6 +76,14 @@ export class SharedFeatureflipCore {
   private initialized = false;
   private initPromise: Promise<void> | null = null;
   private closed = false;
+  private source: FlagSource = 'none';
+  /**
+   * Set for test doubles and server-render clients: initialize() starts nothing,
+   * since there is nothing to fetch for a core that never talks to the network.
+   */
+  private detached = false;
+  /** Set for server-render clients only: identify() records the context and makes no request. */
+  private offline = false;
 
   private refCount = 1;
   private owningMap: Map<string, SharedFeatureflipCore> | null = null;
@@ -69,6 +91,8 @@ export class SharedFeatureflipCore {
 
   private readonly anonymousKeyStore: AnonymousKeyStore;
   private readonly inspectors: EvaluationInspector[];
+  /** Non-null only with `bootstrap: 'localStorage'` and a key that may be persisted. */
+  private flagCache: FlagCache | null = null;
 
   /** Null when sendEvaluationEvents is off, and for createForTesting cores. */
   private reads: ReadRecorder | null = null;
@@ -76,7 +100,11 @@ export class SharedFeatureflipCore {
   /** user_id the reads are attributed to; undefined = not yet resolved. Cleared whenever the context changes. */
   private readUserId: { value: string | undefined } | undefined;
 
-  constructor(config: FeatureflipClientConfig, store: AnonymousKeyStore = createLocalStorageStore()) {
+  constructor(
+    config: FeatureflipClientConfig,
+    store: AnonymousKeyStore = createLocalStorageStore(),
+    flagCache: () => FlagCache = createLocalStorageFlagCache,
+  ) {
     if (!config.clientKey) {
       throw new Error('clientKey is required');
     }
@@ -99,6 +127,47 @@ export class SharedFeatureflipCore {
       });
       this.events = events;
       this.reads = new ReadRecorder((e) => events.enqueue(e));
+    }
+
+    this.applyBootstrap(config.bootstrap, flagCache);
+  }
+
+  /**
+   * Seed the store from the `bootstrap` option, before any request. A core
+   * with values is initialized from construction, so the very first render
+   * (before any effect has called initialize()) already serves them.
+   */
+  private applyBootstrap(bootstrap: FeatureflipClientConfig['bootstrap'], flagCache: () => FlagCache): void {
+    if (bootstrap === 'localStorage') {
+      if (this.config.clientKey.startsWith(SERVER_KEY_PREFIX)) {
+        // A server key in a browser is already exposed to anyone who opens devtools;
+        // don't also leave the flags it unlocks sitting in storage.
+        console.warn(
+          "[featureflip] bootstrap: 'localStorage' is ignored for a server SDK key. " +
+            'Use a client-side SDK key in the browser.',
+        );
+        return;
+      }
+      this.flagCache = flagCache();
+      const cached = this.flagCache.load(
+        this.config.clientKey,
+        this.contextForRequests(this.config.context),
+      );
+      if (cached !== null) {
+        this.setFlags(cached);
+        this.source = 'localStorage';
+        this.initialized = true;
+      }
+      return;
+    }
+
+    if (bootstrap !== null && typeof bootstrap === 'object' && !Array.isArray(bootstrap)) {
+      for (const [key, value] of Object.entries(bootstrap)) {
+        if (value === undefined) continue;
+        this.flags.set(key, { value, variation: '', reason: BOOTSTRAP_REASON });
+      }
+      this.source = 'bootstrap';
+      this.initialized = true;
     }
   }
 
@@ -132,6 +201,27 @@ export class SharedFeatureflipCore {
       core.flags.set(key, { value, variation: 'test', reason: 'test' });
     }
     core.initialized = true;
+    core.detached = true;
+    return core;
+  }
+
+  /**
+   * A core for rendering on the server: serves `config.bootstrap` values (an
+   * object; `'localStorage'` means nothing on a server) and never touches the
+   * network, storage or the factory cache. Not cached, so one request's user
+   * can never be served another's values.
+   */
+  static createForServerRender(config: FeatureflipClientConfig): SharedFeatureflipCore {
+    const bootstrap = typeof config.bootstrap === 'object' ? config.bootstrap : undefined;
+    const core = new SharedFeatureflipCore({ ...config, bootstrap }, {
+      read: () => null,
+      write: () => {},
+    });
+    core.reads = null;
+    core.events = null;
+    core.config.sendEvaluationEvents = false;
+    core.detached = true;
+    core.offline = true;
     return core;
   }
 
@@ -145,6 +235,10 @@ export class SharedFeatureflipCore {
 
   get isInitialized(): boolean {
     return this.initialized;
+  }
+
+  get flagSource(): FlagSource {
+    return this.source;
   }
 
   /** Atomically increments the refcount if the core is still alive. */
@@ -174,31 +268,53 @@ export class SharedFeatureflipCore {
     this.owningKey = key;
   }
 
-  initialize(): Promise<void> {
-    if (this.initialized) return Promise.resolve();
+  /**
+   * Starts the network side exactly once. A core seeded from `bootstrap` is
+   * already initialized, so its callers get an immediate resolve unless they
+   * ask to wait for the server; the fetch still starts on that first call.
+   */
+  initialize(options: InitializeOptions = {}): Promise<void> {
+    if (this.detached) return Promise.resolve();
     if (!this.initPromise) {
-      this.initPromise = this.doInitialize();
+      // Bootstrapped: ready now, on the values it has; the first response reconciles.
+      const readyEarly = this.initialized;
+      this.initPromise = this.doInitialize(readyEarly);
+      // Emitted only once initPromise is set, so a handler calling initialize() joins it.
+      if (readyEarly && !this.closed) this.emitter.emit('ready', { source: this.source });
     }
+    if (this.initialized && !options.waitForServer) return Promise.resolve();
     return this.initPromise;
   }
 
-  private async doInitialize(): Promise<void> {
+  private async doInitialize(readyEarly: boolean): Promise<void> {
     if (!this.closed) this.events?.start();
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.initTimeout);
+    // identify() replaces config.context with a new object before its own request,
+    // so a reference check tells whether this response still describes the user.
+    const requestedFor = this.config.context;
 
     try {
       const result = await evaluate(
         this.config.baseUrl,
         this.config.clientKey,
-        this.contextForRequests(this.config.context),
+        this.contextForRequests(requestedFor),
         controller.signal,
         this.config.sendEvaluationEvents,
       );
       // If close() was called mid-flight, bail out before creating an SSE
       // connection on a discarded client.
       if (this.closed) return;
-      this.setFlags(result.flags);
+      // Superseded by identify(), whose own response will fill the store. Applying
+      // this one would serve (and persist) the previous user's values to the new one.
+      if (this.config.context !== requestedFor) throw new SupersededError();
+      const changes = this.applyServerFlags(result.flags);
+      // Without a bootstrap nobody has been served anything yet, so there is
+      // nothing to announce a change from; 'ready' below covers it.
+      if (readyEarly && Object.keys(changes).length > 0) {
+        this.emitter.emit('change', changes);
+      }
     } catch (err) {
       // Non-terminal: the initial evaluate failed (eval-api unreachable at cold
       // start). Fall through to start the stream, which reconnects forever and
@@ -212,7 +328,7 @@ export class SharedFeatureflipCore {
       // client down on purpose, and a diagnostic about a client that no longer exists
       // is noise, not signal.
       if (this.closed) return;
-      console.warn(
+      if (!(err instanceof SupersededError)) console.warn(
         '[featureflip] initial flag fetch failed, serving defaults until the stream recovers:',
         err,
       );
@@ -224,7 +340,7 @@ export class SharedFeatureflipCore {
     this.initialized = true;
 
     if (this.config.streaming) {
-      this.stream = this.createStream();
+      this.openStream();
     }
     // With `{ streaming: false }` the browser core is a one-shot evaluator by
     // design: it applies the initial snapshot (or, if that evaluate() failed
@@ -234,7 +350,7 @@ export class SharedFeatureflipCore {
     // reload) to retry. The default (`streaming` unset -> true) self-heals via the
     // reconnecting stream above. Keep `streaming: false` for one-shot use only.
 
-    this.emitter.emit('ready');
+    if (!readyEarly) this.emitter.emit('ready', { source: this.source });
   }
 
   boolVariation(key: string, defaultValue: boolean): boolean {
@@ -299,7 +415,8 @@ export class SharedFeatureflipCore {
       // anon-id-resolved context the flags were actually evaluated against.
       context: { ...this.contextForRequests(this.config.context) },
       value,
-      variationKey: flag?.variation,
+      // A bootstrap value has no variation key; report none rather than ''.
+      variationKey: flag?.variation || undefined,
       reason,
       ruleId,
       prerequisiteKey: flag?.prerequisiteKey,
@@ -323,7 +440,7 @@ export class SharedFeatureflipCore {
    */
   private recordRead(flagKey: string, flag: FlagValue | undefined): void {
     if (this.reads === null || this.closed) return;
-    this.reads.record(flagKey, flag?.variation, this.userIdForReads());
+    this.reads.record(flagKey, flag?.variation || undefined, this.userIdForReads());
   }
 
   private userIdForReads(): string | undefined {
@@ -349,6 +466,8 @@ export class SharedFeatureflipCore {
     this.config.context = context;
     this.readUserId = undefined;
 
+    if (this.offline) return;
+
     // The header below promises this client reports its reads, so the processor
     // must be running even when identify() precedes initialize(). Idempotent.
     if (!this.closed) this.events?.start();
@@ -370,6 +489,8 @@ export class SharedFeatureflipCore {
         this.config.sendEvaluationEvents,
       );
     } catch (err) {
+      // A later identify() owns the context and the stream now: reverting would undo it.
+      if (this.config.context !== context) throw err;
       // Revert context so it stays consistent with the current flags
       this.config.context = previousContext;
       this.readUserId = undefined;
@@ -377,21 +498,23 @@ export class SharedFeatureflipCore {
 
       // Re-establish SSE with the original context
       if (this.config.streaming) {
-        this.stream = this.createStream();
+        this.openStream();
       }
 
       throw err;
     }
 
-    const changes = this.computeChanges(result.flags);
-    this.setFlags(result.flags);
+    // Superseded by a later identify(): its response is the one to apply.
+    if (this.config.context !== context) return;
+
+    const changes = this.applyServerFlags(result.flags);
 
     if (Object.keys(changes).length > 0) {
       this.emitter.emit('change', changes);
     }
 
     if (this.config.streaming) {
-      this.stream = this.createStream();
+      this.openStream();
     }
   }
 
@@ -427,6 +550,16 @@ export class SharedFeatureflipCore {
     this.reads = null;
   }
 
+  /**
+   * Replace any open stream with one for the current context. The initial fetch
+   * and an overlapping identify() both open one when they finish, so assigning
+   * without closing would leave the first connected and leaked.
+   */
+  private openStream(): void {
+    this.stream?.close();
+    this.stream = this.createStream();
+  }
+
   private createStream(): StreamingConnection {
     return new StreamingConnection({
       baseUrl: this.config.baseUrl,
@@ -444,6 +577,31 @@ export class SharedFeatureflipCore {
     for (const [key, flag] of Object.entries(flags)) {
       this.flags.set(key, flag);
     }
+  }
+
+  /** Replace the store with a full set of server values; returns what changed. */
+  private applyServerFlags(flags: Record<string, FlagValue>): FlagChanges {
+    const changes = this.computeChanges(flags);
+    this.setFlags(flags);
+    this.source = 'server';
+    this.persist();
+    return changes;
+  }
+
+  /**
+   * Save the current store as the last-known values for the current context.
+   * Called only after server data has been applied, so a bootstrap object is
+   * never written. Every caller has checked that the data describes
+   * config.context: the initial fetch and identify() drop responses a later
+   * identify() superseded, and identify() closes the stream before switching.
+   */
+  private persist(): void {
+    if (this.flagCache === null || this.closed) return;
+    this.flagCache.save(
+      this.config.clientKey,
+      this.contextForRequests(this.config.context),
+      Object.fromEntries(this.flags),
+    );
   }
 
   private computeChanges(
@@ -478,8 +636,7 @@ export class SharedFeatureflipCore {
     // instead of lingering and serving its stale value (#1873). Deltas fall
     // through to the merge below.
     if (isSnapshot) {
-      const changes = this.computeChanges(flags);
-      this.setFlags(flags);
+      const changes = this.applyServerFlags(flags);
       if (Object.keys(changes).length > 0) {
         this.emitter.emit('change', changes);
       }
@@ -505,6 +662,8 @@ export class SharedFeatureflipCore {
         this.flags.set(key, flag);
       }
     }
+    this.source = 'server';
+    this.persist();
 
     if (Object.keys(changes).length > 0) {
       this.emitter.emit('change', changes);

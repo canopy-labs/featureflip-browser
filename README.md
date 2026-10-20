@@ -43,13 +43,18 @@ Returns a client for the given client key. The first call constructs and registe
 | `context` | `Record<string, unknown>` | `{}` | Initial evaluation context (user attributes) |
 | `streaming` | `boolean` | `true` | Enable SSE streaming for real-time updates |
 | `initTimeout` | `number` | `10000` | Timeout in ms for the initial evaluate request |
+| `bootstrap` | `Record<string, unknown> \| 'localStorage'` | `undefined` | Values to serve before the first server response. See [Bootstrapping](#bootstrapping). |
 | `sendEvaluationEvents` | `boolean` | `true` | Report which flags your app reads. Featureflip uses this to tell a flag your code still reads from one it only sends, which is what lets an unused client-side flag be archived. Only reads through `flagDetail()` or the typed `*Variation` methods count. Set `false` to report nothing — Featureflip then treats every flag it sends to this client as in use. |
 
 ### Methods
 
-#### `initialize(): Promise<void>`
+#### `initialize(options?: { waitForServer?: boolean }): Promise<void>`
 
-Fetches all flag values from the server. Must be called before reading variations. Opens an SSE streaming connection if `streaming` is enabled.
+Fetches all flag values from the server. Must be called before reading variations (unless the client was bootstrapped). Opens an SSE streaming connection if `streaming` is enabled. With bootstrap values it resolves immediately while the fetch runs in the background; pass `{ waitForServer: true }` to wait for the first server response instead.
+
+#### `flagSource: 'none' | 'bootstrap' | 'localStorage' | 'server'`
+
+Where the values currently being served came from.
 
 #### `boolVariation(key: string, defaultValue: boolean): boolean`
 
@@ -79,7 +84,7 @@ await client.identify({ user_id: '123', plan: 'pro' });
 
 Subscribe to events.
 
-- `'ready'` -- fired after `initialize()` completes
+- `'ready'` -- fired once, when the client first has values to serve (receives `{ source }`, the same values as `flagSource`)
 - `'change'` -- fired when flag values change (receives a `FlagChanges` object)
 - `'error'` -- fired on streaming or network errors
 
@@ -96,6 +101,27 @@ Unsubscribe from events.
 #### `close(): void`
 
 Decrements the refcount on the shared core. When the last handle for a given client key is closed, the shared core closes the SSE connection and removes itself from the factory cache. Double-close on the same handle is a no-op.
+
+### Bootstrapping
+
+Pass `bootstrap` so the first paint doesn't wait on the network:
+
+- **An object** of `{ flagKey: value }`, typically evaluated by a server SDK while rendering the page and embedded in the HTML. The client is initialized immediately and makes no request before your first read.
+- **`'localStorage'`**: the client saves the values it receives per client key and context (the five most recent contexts, named by a hash so context attributes are not stored) and serves them on the next page load. Values for one context are never served to another. Ignored for a server SDK key.
+
+Either way the client still fetches and streams as usual. The server's values replace the bootstrap ones and emit `change` for any that differ.
+
+```ts
+const client = FeatureflipClient.get({
+  clientKey: 'your-client-sdk-key',
+  context: window.__FLAG_CONTEXT__, // the same context the server evaluated with
+  bootstrap: window.__FLAGS__,
+});
+```
+
+For server-side rendering, `FeatureflipClient.forServerRender(config)` returns a client that serves the `bootstrap` object's values, makes no network requests, and is not cached, so concurrent requests for different users never share one.
+
+Full guide: [Bootstrap client-side flags](https://featureflip.io/docs/guides/bootstrap/).
 
 ### Testing
 

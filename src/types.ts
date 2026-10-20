@@ -20,11 +20,57 @@ export interface FeatureflipClientConfig {
    * not structurally comparable.
    */
   inspectors?: EvaluationInspector[];
+  /**
+   * Flag values to serve before the first server response, so the first paint
+   * doesn't wait on the network. Either:
+   *
+   * - an object of `{ flagKey: value }`, typically evaluated by a server SDK
+   *   while rendering the page and embedded in the HTML; or
+   * - `'localStorage'`, to serve the values this browser last received for the
+   *   same client key and context, and keep them up to date as new ones arrive.
+   *
+   * Either way the client is initialized at once and `initialize()` resolves
+   * without waiting; the server's values then replace these, emitting `change`
+   * for any that differ. Honored on the first `get()` per client key, and
+   * excluded from the config-equality check.
+   */
+  bootstrap?: Record<string, unknown> | 'localStorage';
+}
+
+/**
+ * Where the flag values currently being served came from: `'bootstrap'` (the
+ * object passed as `bootstrap`), `'localStorage'` (values persisted by an
+ * earlier page load), `'server'` (an evaluate response or the stream), or
+ * `'none'` (nothing yet; every variation call returns its default).
+ */
+export type FlagSource = 'none' | 'bootstrap' | 'localStorage' | 'server';
+
+/** Passed to `'ready'` handlers. */
+export interface ReadyEvent {
+  /** What the client had to serve when it became ready. */
+  source: FlagSource;
+}
+
+export interface InitializeOptions {
+  /**
+   * Resolve only once the first server response has been applied (or has
+   * failed), even when bootstrap values made the client ready earlier.
+   * Default `false`.
+   */
+  waitForServer?: boolean;
 }
 
 export interface FlagValue {
   value: unknown;
+  /**
+   * The served variation's key. Empty for a value from a `bootstrap` object,
+   * which carries values only; the server's response fills it in.
+   */
   variation: string;
+  /**
+   * The server's reason, or `'bootstrap'` / `'persisted'` for a value served
+   * from the `bootstrap` option before the server has answered.
+   */
   reason: string;
   /**
    * Key of the prerequisite flag that caused this flag to serve its off

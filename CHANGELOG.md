@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.12.0 — 2026-10-20
+
+### Added
+
+- A new `bootstrap` option lets the first paint use real flag values instead of waiting on the network. (#4095)
+  - Pass an object of `{ flagKey: value }`, for example the values your server SDK evaluated while rendering the page, and the client is initialized as soon as it is created. It makes no request before your first render, and `initialize()` resolves at once. The client then fetches as before, and the server's values replace the bootstrap ones, firing `change` for any that differ.
+  - Pass `'localStorage'` and the client saves the values it receives for each client key and context, then serves them on the next page load until the fresh ones arrive. Values saved for one context are never served to another. Storage holds the five most recently used contexts and names each entry by a hash, so context attributes are not written to storage. A failing or full `localStorage` falls back to the normal start, and a server SDK key is never persisted.
+- `initialize({ waitForServer: true })` waits for the first server response even when bootstrap values have already made the client ready.
+- `flagSource` reports where the values being served came from (`'bootstrap'`, `'localStorage'`, `'server'` or `'none'`), and the `ready` event now passes `{ source }` with the same values.
+- `FeatureflipClient.forServerRender(config)` returns a client for server-side rendering. It serves the `bootstrap` values, makes no requests and is not shared through the client cache, so concurrent requests for different users never see each other's values.
+- Reads of bootstrap values are reported like any other read. Evaluation inspectors see reason `'bootstrap'` or `'persisted'` until the server's values arrive, and a value from a bootstrap object has no variation key.
+
+### Fixed
+
+- A context change during the initial fetch no longer serves the previous user's flags. When `identify()` (or a repeat `get()` with a different context) started before the first evaluate response arrived, that response was applied anyway, so the new user was served the old user's values until their own arrived, or, if the old response came last, until the next stream snapshot (never, with `streaming: false`). The same happened when two `identify()` calls overlapped and the earlier one answered last, and a failing earlier call reverted the context over the newer one. Superseded responses are now dropped. (#4095)
+- In that same overlap, the initial fetch and `identify()` each opened a stream, and the first one was never closed. Opening a stream now closes the previous one.
+
 ## 2.11.1 — 2026-10-09
 
 ### Changed
