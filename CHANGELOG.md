@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.14.0 — 2026-10-20
+
+### Changed
+
+- Republished in lockstep with `@featureflip/react` 2.14.0, which now identifies itself through this package's `wrappers` option. This package has no source changes of its own. Recorded here because the npm release tag publishes all four JavaScript packages at a single version. (#4147)
+
 ## 2.13.0 — 2026-10-20
 
 ### Added
