@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { FeatureflipClient } from '../client';
+import { SDK_TOKEN } from '../identity';
 
 function mockFetch(flags: Record<string, { value: unknown; variation: string; reason: string }>) {
   return vi.fn().mockResolvedValue({
@@ -494,6 +495,7 @@ describe('FeatureflipClient', () => {
         headers: {
           'Content-Type': 'application/json',
           Authorization: 'my-sdk-key',
+          'X-Featureflip-SDK': SDK_TOKEN,
           'X-Featureflip-Reports-Evaluations': '1',
         },
         body: JSON.stringify({ context: { user_id: 'abc' } }),

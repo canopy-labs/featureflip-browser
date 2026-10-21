@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventProcessor } from '../core/event-processor';
+import { SDK_TOKEN } from '../identity';
 import type { EvaluationReadEvent } from '../core/read-recorder';
 
 const ev = (flagKey: string): EvaluationReadEvent => ({
@@ -51,7 +52,7 @@ describe('EventProcessor', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe('http://eval.test/v1/client/events');
     expect(init.method).toBe('POST');
-    expect(init.headers).toEqual({ 'Content-Type': 'application/json', Authorization: 'ck' });
+    expect(init.headers).toEqual({ 'Content-Type': 'application/json', Authorization: 'ck', 'X-Featureflip-SDK': SDK_TOKEN });
     expect(JSON.parse(init.body)).toEqual({ events: [ev('a')] });
     expect(p.queueLength).toBe(0);
     p.stop();

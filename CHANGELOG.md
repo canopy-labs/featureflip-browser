@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.13.0 — 2026-10-20
+
+### Added
+
+- Every request to evaluate, identify and the event endpoint now carries `X-Featureflip-SDK: featureflip-browser/<version>`, including the keepalive flush a closing page sends. The SDK previously sent nothing that identified it: its requests carried only the end user's browser `User-Agent`, which a script cannot change. The header adds no CORS preflight, because `Authorization` already makes these requests non-simple. The SSE stream still carries no identity, since the native `EventSource` cannot send custom headers. The version is inlined from `package.json` at build time, so it cannot go stale between releases. (#4146)
+- A `wrappers` option for libraries that wrap this SDK, such as `@featureflip/react`. Each `name/version` token is sent, in order, after the SDK's own, so usage through the wrapper can be counted. An invalid token is ignored with a warning, and differing wrappers do not trigger the "different options" warning. (#4146)
+
 ## 2.12.0 — 2026-10-20
 
 ### Added

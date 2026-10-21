@@ -1,8 +1,11 @@
 import type { EvaluationReadEvent } from './read-recorder';
+import { SDK_HEADER, SDK_TOKEN } from '../identity';
 
 export interface EventProcessorOptions {
   baseUrl: string;
   clientKey: string;
+  /** Sent as X-Featureflip-SDK (#4146). Defaults to the bare SDK token. */
+  identity?: string;
   flushIntervalMs?: number;
   batchSize?: number;
   maxQueueSize?: number;
@@ -36,6 +39,7 @@ export class EventProcessor {
 
   private readonly url: string;
   private readonly clientKey: string;
+  private readonly identity: string;
   private readonly flushIntervalMs: number;
   private readonly batchSize: number;
   private readonly maxQueueSize: number;
@@ -44,6 +48,7 @@ export class EventProcessor {
   constructor(options: EventProcessorOptions) {
     this.url = `${options.baseUrl}/v1/client/events`;
     this.clientKey = options.clientKey;
+    this.identity = options.identity ?? SDK_TOKEN;
     this.flushIntervalMs = options.flushIntervalMs ?? 30_000;
     this.batchSize = Math.max(1, options.batchSize ?? 100);
     this.maxQueueSize = Math.max(1, options.maxQueueSize ?? 1000);
@@ -106,7 +111,8 @@ export class EventProcessor {
     try {
       const response = await fetch(this.url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: this.clientKey },
+        // Unlike sendBeacon, a keepalive fetch can carry custom headers.
+        headers: { 'Content-Type': 'application/json', Authorization: this.clientKey, [SDK_HEADER]: this.identity },
         body: JSON.stringify({ events: batch }),
         keepalive,
       });

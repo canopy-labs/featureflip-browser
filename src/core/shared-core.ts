@@ -16,6 +16,7 @@ import { ReadRecorder } from './read-recorder';
 import { EventProcessor } from './event-processor';
 import { createLocalStorageStore, withAnonymousUserId, type AnonymousKeyStore } from './anonymous-key';
 import { createLocalStorageFlagCache, type FlagCache } from './flag-cache';
+import { buildIdentity } from '../identity';
 
 /** The engine embeds the matched rule id in the reason as `rule-match:{id}`. */
 const RULE_MATCH_PREFIX = 'rule-match:';
@@ -31,9 +32,10 @@ const SERVER_KEY_PREFIX = 'sdk_server';
  * are not structurally comparable, so including it would make a differing
  * callback trip the "different options" warning on repeat `get()`. So is
  * `bootstrap`: it is per page render, so a repeat `get()` passing different
- * values is expected, not a misconfiguration.
+ * values is expected, not a misconfiguration. And so is `wrappers`: it
+ * identifies the caller rather than changing behavior.
  */
-export type ResolvedConfig = Required<Omit<FeatureflipClientConfig, 'inspectors' | 'bootstrap'>>;
+export type ResolvedConfig = Required<Omit<FeatureflipClientConfig, 'inspectors' | 'bootstrap' | 'wrappers'>>;
 
 /**
  * Resolve a user-supplied config to the fully-defaulted shape. Exported so
@@ -91,6 +93,8 @@ export class SharedFeatureflipCore {
 
   private readonly anonymousKeyStore: AnonymousKeyStore;
   private readonly inspectors: EvaluationInspector[];
+  /** `featureflip-browser/<version>` plus wrapper tokens, built once (#4146). */
+  private readonly identity: string;
   /** Non-null only with `bootstrap: 'localStorage'` and a key that may be persisted. */
   private flagCache: FlagCache | null = null;
 
@@ -116,11 +120,14 @@ export class SharedFeatureflipCore {
     this.inspectors = (config.inspectors ?? []).filter(
       (i): i is EvaluationInspector => typeof i === 'function',
     );
+    // Also from the RAW config, for the same reason (#4146).
+    this.identity = buildIdentity(config.wrappers);
 
     if (this.config.sendEvaluationEvents) {
       const events = new EventProcessor({
         baseUrl: this.config.baseUrl,
         clientKey: this.config.clientKey,
+        identity: this.identity,
         // A page coming back into view may have slept through the archive guard's 24 h;
         // start a new read window so its next reads are reported straight away.
         onVisible: () => this.reads?.resetWindow(),
@@ -302,6 +309,7 @@ export class SharedFeatureflipCore {
         this.contextForRequests(requestedFor),
         controller.signal,
         this.config.sendEvaluationEvents,
+        this.identity,
       );
       // If close() was called mid-flight, bail out before creating an SSE
       // connection on a discarded client.
@@ -487,6 +495,7 @@ export class SharedFeatureflipCore {
         this.contextForRequests(context),
         undefined,
         this.config.sendEvaluationEvents,
+        this.identity,
       );
     } catch (err) {
       // A later identify() owns the context and the stream now: reverting would undo it.

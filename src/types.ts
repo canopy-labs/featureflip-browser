@@ -35,6 +35,15 @@ export interface FeatureflipClientConfig {
    * excluded from the config-equality check.
    */
   bootstrap?: Record<string, unknown> | 'localStorage';
+  /**
+   * `name/version` tokens for libraries that wrap this SDK (`@featureflip/react`,
+   * a design-system shell), sent in order after `featureflip-browser/<version>`
+   * in the `X-Featureflip-SDK` header so usage through each can be counted. An
+   * invalid token is ignored with a warning. Honored on the first `get()` per
+   * client key, and excluded from the config-equality check: it identifies the
+   * caller rather than changing behavior.
+   */
+  wrappers?: string[];
 }
 
 /**
