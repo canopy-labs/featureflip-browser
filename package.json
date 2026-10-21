@@ -1,6 +1,6 @@
 {
   "name": "@featureflip/browser",
-  "version": "2.14.0",
+  "version": "2.14.1",
   "description": "Browser SDK for Featureflip - framework-agnostic feature flag client",
   "keywords": [
     "feature-flags",
