@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.17.0 — 2026-10-27
+
+### Changed
+
+- Republished in lockstep with `@featureflip/edge` 2.17.0. This package has no source changes of its own. Recorded here because the npm release tag publishes all five JavaScript packages at a single version. (#4210)
+
 ## 2.16.0 — 2026-10-26
 
 ### Changed
