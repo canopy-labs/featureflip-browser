@@ -208,16 +208,14 @@ describe('read reporting', () => {
     expect(sentEvents(fetchMock)[0]).toMatchObject({ flagKey: 'bool-flag', userId: 'camel' });
   });
 
-  it('forTesting clients do not send the reports-evaluations header on identify', async () => {
+  // Stronger than the header check this replaced: a test double's identify()
+  // sends nothing at all (#4358), so it can never claim to report reads.
+  it('forTesting clients make no identify request, so never claim to report reads', async () => {
     const fetchMock = routedFetch();
     globalThis.fetch = fetchMock as unknown as typeof fetch;
-    // identify() opens a stream (streaming defaults on); jsdom has no EventSource.
-    vi.stubGlobal('EventSource', class { addEventListener() {} close() {} onerror = null; });
     const client = FeatureflipClient.forTesting({ 'bool-flag': true });
     await client.identify({ user_id: 'u1' });
-    vi.unstubAllGlobals();
-    const [[, init]] = callsTo(fetchMock, '/v1/client/identify');
-    expect((init as RequestInit).headers).not.toHaveProperty('X-Featureflip-Reports-Evaluations');
+    expect(callsTo(fetchMock, '/v1/client/identify')).toEqual([]);
     client.close();
   });
 });

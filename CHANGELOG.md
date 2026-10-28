@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.17.2 — 2026-10-27
+
+### Fixed
+
+- `FeatureflipClient.forTesting()` clients no longer reach the network on `identify()`. The call used to POST to the Evaluation API and open a stream, so a test that switched users got a real request, or a rejected promise where no `EventSource` exists. It now updates the context and keeps the seeded flags, like `forServerRender()`. (#4358)
+
 ## 2.17.1 — 2026-10-27
 
 ### Changed

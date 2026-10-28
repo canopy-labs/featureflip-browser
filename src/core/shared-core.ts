@@ -209,6 +209,9 @@ export class SharedFeatureflipCore {
     }
     core.initialized = true;
     core.detached = true;
+    // Offline too, or identify() still makes its request and opens a stream
+    // (#4358): detached only short-circuits initialize().
+    core.offline = true;
     return core;
   }
 
