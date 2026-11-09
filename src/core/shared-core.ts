@@ -77,6 +77,12 @@ export class SharedFeatureflipCore {
   private stream: StreamingConnection | null = null;
   private initialized = false;
   private initPromise: Promise<void> | null = null;
+  /**
+   * Settles (never rejects) when the newest identify() finishes; null when none is in
+   * flight. `initialize({ waitForServer })` waits on it so it resolves on values that
+   * describe the current context, not before them (#5286).
+   */
+  private identifyInFlight: Promise<void> | null = null;
   private closed = false;
   private source: FlagSource = 'none';
   /**
@@ -293,7 +299,20 @@ export class SharedFeatureflipCore {
       if (readyEarly && !this.closed) this.emitter.emit('ready', { source: this.source });
     }
     if (this.initialized && !options.waitForServer) return Promise.resolve();
-    return this.initPromise;
+    if (!options.waitForServer) return this.initPromise;
+    // An identify() overlapping the initial fetch supersedes it: that response is
+    // discarded and initPromise resolves without server values. The answer for the
+    // current context is the identify's, so wait for the newest one too (#5286).
+    return this.initPromise.then(() => this.awaitIdentifies());
+  }
+
+  private async awaitIdentifies(): Promise<void> {
+    // A later identify() can start while we wait; keep following the newest one.
+    while (this.identifyInFlight) {
+      const pending = this.identifyInFlight;
+      await pending;
+      if (this.identifyInFlight === pending) return;
+    }
   }
 
   private async doInitialize(readyEarly: boolean): Promise<void> {
@@ -472,7 +491,20 @@ export class SharedFeatureflipCore {
     return flag;
   }
 
-  async identify(context: Record<string, unknown>): Promise<void> {
+  identify(context: Record<string, unknown>): Promise<void> {
+    const result = this.doIdentify(context);
+    const settled = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.identifyInFlight = settled;
+    void settled.then(() => {
+      if (this.identifyInFlight === settled) this.identifyInFlight = null;
+    });
+    return result;
+  }
+
+  private async doIdentify(context: Record<string, unknown>): Promise<void> {
     const previousContext = this.config.context;
     this.config.context = context;
     this.readUserId = undefined;

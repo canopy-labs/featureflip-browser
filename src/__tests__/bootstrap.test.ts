@@ -317,6 +317,54 @@ describe('bootstrap', () => {
       expect(createLocalStorageFlagCache().load('k', { user_id: 'a' })).toBeNull();
     });
 
+    // #5286: a route guard waiting on waitForServer redirected on the defaults because the
+    // superseded initial fetch resolved the wait before identify()'s answer was applied.
+    it('initialize({ waitForServer: true }) waits for the identify() that superseded the initial fetch', async () => {
+      const net = deferredFetch();
+      globalThis.fetch = net.fetchMock;
+      stubEventSource();
+
+      const client = FeatureflipClient.get({ clientKey: 'k', context: { user_id: 'a' }, bootstrap: 'localStorage' });
+      let resolved = false;
+      const waited = client.initialize({ waitForServer: true }).then(() => {
+        resolved = true;
+      });
+      const ident = client.identify({ user_id: 'b' });
+
+      net.respond({ banner: { value: false, variation: 'off', reason: 'fallthrough' } }); // a's answer, discarded
+      await flush();
+      expect(resolved).toBe(false);
+
+      net.respond({ banner: { value: true, variation: 'on', reason: 'fallthrough' } }); // b's answer
+      await ident;
+      await waited;
+      expect(client.flagSource).toBe('server');
+      expect(client.boolVariation('banner', false)).toBe(true);
+    });
+
+    it('initialize({ waitForServer: true }) still resolves when the superseding identify() fails', async () => {
+      // The initial evaluate answers only when released; the identify request fails outright.
+      let releaseEvaluate: () => void = () => {};
+      globalThis.fetch = vi.fn().mockImplementation((url: string) => {
+        if (String(url).endsWith('/v1/client/events')) {
+          return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
+        }
+        if (String(url).endsWith('/v1/client/identify')) return Promise.reject(new TypeError('Failed to fetch'));
+        return new Promise((resolve) => {
+          releaseEvaluate = () => resolve({ ok: true, json: () => Promise.resolve({ flags: {} }) });
+        });
+      }) as unknown as typeof fetch;
+      stubEventSource();
+
+      const client = FeatureflipClient.get({ clientKey: 'k', context: { user_id: 'a' }, bootstrap: 'localStorage' });
+      const waited = client.initialize({ waitForServer: true });
+      const ident = client.identify({ user_id: 'b' }).catch(() => {});
+      releaseEvaluate(); // a's answer, discarded as superseded
+
+      await ident;
+      await expect(waited).resolves.toBeUndefined();
+    });
+
     it('leaves one open stream when identify() overlaps the initial fetch', async () => {
       const net = deferredFetch();
       globalThis.fetch = net.fetchMock;

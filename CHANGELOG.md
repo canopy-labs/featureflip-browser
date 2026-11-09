@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.19.1 — 2026-11-09
+
+### Fixed
+
+- `initialize({ waitForServer: true })` now waits for an `identify()` that started while the first flag fetch was in flight. That fetch's answer is discarded because it describes the previous context, and the wait used to resolve on it anyway, before any server values for the current context had arrived. A route guard waiting on it could act on default values. (#5286)
+
 ## 2.19.0 — 2026-11-07
 
 ### Changed
