@@ -1,3 +1,5 @@
+import { createLogger } from './core/redact';
+
 /**
  * The token every request carries so the Evaluation API can count SDK usage by
  * name and version (#4146, contract in #4138). The version is inlined from
@@ -19,13 +21,13 @@ const PRODUCT = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+(\/[!#$%&'*+.^_`|~0-9A-Za-z-]+)?$/;
  * a valid product token is dropped with a warning: identity metadata must never
  * stop the client starting. Filtered defensively because JS callers bypass the types.
  */
-export function buildIdentity(wrappers: readonly unknown[] | undefined): string {
+export function buildIdentity(wrappers: readonly unknown[] | undefined, clientKey = ''): string {
   const tokens = [SDK_TOKEN];
   for (const wrapper of wrappers ?? []) {
     if (typeof wrapper === 'string' && PRODUCT.test(wrapper)) {
       tokens.push(wrapper);
     } else {
-      console.warn(
+      createLogger(clientKey).warn(
         `[featureflip] ignoring wrapper ${JSON.stringify(wrapper)}: not a valid "name/version" product token`,
       );
     }

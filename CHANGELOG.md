@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.19.2 — 2026-11-16
+
+### Security
+
+- The SDK key is now redacted from every log line the SDK emits, and from error messages it raises or emits, including errors from the HTTP stack that quote the `Authorization` header or the stream URL. The key is replaced with `[redacted]` for keys of 20 characters or more. (#5167, #5166)
+
 ## 2.19.1 — 2026-11-09
 
 ### Fixed

@@ -17,6 +17,7 @@ import { EventProcessor } from './event-processor';
 import { createLocalStorageStore, withAnonymousUserId, type AnonymousKeyStore } from './anonymous-key';
 import { createLocalStorageFlagCache, type FlagCache } from './flag-cache';
 import { buildIdentity } from '../identity';
+import { createLogger, redactError, toRedactedError } from './redact';
 
 /** The engine embeds the matched rule id in the reason as `rule-match:{id}`. */
 const RULE_MATCH_PREFIX = 'rule-match:';
@@ -97,6 +98,8 @@ export class SharedFeatureflipCore {
   private owningMap: Map<string, SharedFeatureflipCore> | null = null;
   private owningKey: string | null = null;
 
+  /** Every SDK log line goes through this; it strips the SDK key (#5167). */
+  private readonly log: ReturnType<typeof createLogger>;
   private readonly anonymousKeyStore: AnonymousKeyStore;
   private readonly inspectors: EvaluationInspector[];
   /** `featureflip-browser/<version>` plus wrapper tokens, built once (#4146). */
@@ -119,6 +122,7 @@ export class SharedFeatureflipCore {
       throw new Error('clientKey is required');
     }
     this.config = resolveConfig(config);
+    this.log = createLogger(this.config.clientKey);
     this.anonymousKeyStore = store;
     // Read from the RAW config — inspectors are deliberately not part of the
     // resolved config. Non-function entries are dropped rather than throwing
@@ -127,7 +131,7 @@ export class SharedFeatureflipCore {
       (i): i is EvaluationInspector => typeof i === 'function',
     );
     // Also from the RAW config, for the same reason (#4146).
-    this.identity = buildIdentity(config.wrappers);
+    this.identity = buildIdentity(config.wrappers, this.config.clientKey);
 
     if (this.config.sendEvaluationEvents) {
       const events = new EventProcessor({
@@ -155,7 +159,7 @@ export class SharedFeatureflipCore {
       if (this.config.clientKey.startsWith(SERVER_KEY_PREFIX)) {
         // A server key in a browser is already exposed to anyone who opens devtools;
         // don't also leave the flags it unlocks sitting in storage.
-        console.warn(
+        this.log.warn(
           "[featureflip] bootstrap: 'localStorage' is ignored for a server SDK key. " +
             'Use a client-side SDK key in the browser.',
         );
@@ -358,7 +362,7 @@ export class SharedFeatureflipCore {
       // client down on purpose, and a diagnostic about a client that no longer exists
       // is noise, not signal.
       if (this.closed) return;
-      if (!(err instanceof SupersededError)) console.warn(
+      if (!(err instanceof SupersededError)) this.log.warn(
         '[featureflip] initial flag fetch failed, serving defaults until the stream recovers:',
         err,
       );
@@ -457,7 +461,7 @@ export class SharedFeatureflipCore {
       try {
         inspector(event);
       } catch (err) {
-        console.warn('[featureflip] evaluation inspector threw:', err);
+        this.log.warn('[featureflip] evaluation inspector threw:', err);
       }
     }
   }
@@ -534,18 +538,19 @@ export class SharedFeatureflipCore {
       );
     } catch (err) {
       // A later identify() owns the context and the stream now: reverting would undo it.
-      if (this.config.context !== context) throw err;
+      const safe = toRedactedError(err, this.config.clientKey);
+      if (this.config.context !== context) throw safe;
       // Revert context so it stays consistent with the current flags
       this.config.context = previousContext;
       this.readUserId = undefined;
-      this.emitter.emit('error', err instanceof Error ? err : new Error(String(err)));
+      this.emitter.emit('error', safe);
 
       // Re-establish SSE with the original context
       if (this.config.streaming) {
         this.openStream();
       }
 
-      throw err;
+      throw safe;
     }
 
     // Superseded by a later identify(): its response is the one to apply.
@@ -610,7 +615,7 @@ export class SharedFeatureflipCore {
       clientKey: this.config.clientKey,
       context: this.contextForRequests(this.config.context),
       onChange: (flags, isSnapshot) => this.handleFlagUpdate(flags, isSnapshot),
-      onError: (error) => this.emitter.emit('error', error),
+      onError: (error) => this.emitter.emit('error', redactError(error, this.config.clientKey)),
     });
   }
 

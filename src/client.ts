@@ -7,6 +7,7 @@ import type {
   FlagValue,
   InitializeOptions,
 } from './types';
+import { createLogger } from './core/redact';
 import { SharedFeatureflipCore, contextsEqual, resolveConfig, resolvedConfigsEqual } from './core/shared-core';
 
 /**
@@ -66,7 +67,7 @@ export class FeatureflipClient {
         if (existing.tryAcquire()) {
           const candidateConfig = resolveConfig(config);
           if (!resolvedConfigsEqual(existing.config, candidateConfig)) {
-            console.warn(
+            createLogger(clientKey).warn(
               '[featureflip] FeatureflipClient.get called with different options ' +
                 'for a client key already in use. The cached instance\'s options are ' +
                 'preserved; the passed options are ignored.',
